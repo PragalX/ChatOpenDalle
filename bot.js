@@ -24,6 +24,7 @@ const openai = new OpenAIApi(configuration);
 // MongoDB client
 const client = new MongoClient(MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true });
 let usersCollection;
+let groupsCollection; // Collection to store group info
 let subscriptionsCollection;
 let giftCodesCollection;
 
@@ -35,6 +36,7 @@ client.connect(err => {
 
   const db = client.db('telegram_bot');
   usersCollection = db.collection('users');
+  groupsCollection = db.collection('groups'); // Initialize groups collection
   subscriptionsCollection = db.collection('subscriptions');
   giftCodesCollection = db.collection('gift_codes');
   log('Connected to MongoDB');
@@ -50,7 +52,7 @@ client.connect(err => {
 
   function logMessage(bot, user, userInput, botResponse) {
     if (LOG_CHANNEL_ID) {
-      const userInfo = `User ID: ${user.id}\nUsername: @${user.username}\nName: ${user.first_name} ${user.last_name}`;
+      const userInfo = `User ID: ${user.id}\nUsername: @${user.username}\nName: ${user.first_name} ${user.last_name || ''}`;
       const message = `${userInfo}\nUser input: ${userInput}\nBot response: ${botResponse}`;
       bot.telegram.sendMessage(LOG_CHANNEL_ID, message).catch(err => {
         log(`Error sending log message: ${err}`);
@@ -75,7 +77,8 @@ client.connect(err => {
     await ctx.reply(responseText);
     logMessage(bot, user, userInput, responseText);
 
-    await usersCollection.updateOne({ user_id: user.id }, { $set: { username: user.username, full_name: `${user.first_name} ${user.last_name}` } }, { upsert: true });
+    const fullName = `${user.first_name} ${user.last_name || ''}`.trim();
+    await usersCollection.updateOne({ user_id: user.id }, { $set: { username: user.username, full_name: fullName } }, { upsert: true });
   });
 
   bot.help((ctx) => {
@@ -150,15 +153,20 @@ client.connect(err => {
     if (subscription && subscription.plan === 'professional') {
       const userPrompt = ctx.message.text.split(' ').slice(1).join(' ');
       if (userPrompt) {
-        await ctx.reply('Generating image...');
-        const imageUrl = await generateImage(userPrompt);
-        if (imageUrl) {
-          await ctx.replyWithPhoto(imageUrl);
-          logMessage(bot, user, userInput, imageUrl);
-        } else {
-          const responseText = 'Sorry, there was an error generating the image. Please contact @AkhandanandTripathi to fix it.';
-          await ctx.reply(responseText);
-          logMessage(bot, user, userInput, responseText);
+        await ctx.reply('Generating images...');
+
+        for (let i = 0; i < 15; i++) {
+          const imageUrl = await generateImage(`${userPrompt} (image ${i + 1} improving each time)`);
+          if (imageUrl) {
+            await ctx.replyWithPhoto(imageUrl);
+            logMessage(bot, user, userInput, imageUrl);
+          } else {
+            const responseText = 'Sorry, there was an error generating one of the images. Please contact @AkhandanandTripathi to fix it.';
+            await ctx.reply(responseText);
+            logMessage(bot, user, userInput, responseText);
+            break;
+          }
+          await new Promise(resolve => setTimeout(resolve, 5000)); // wait for 5 seconds
         }
       } else {
         const responseText = 'Please provide a prompt after the /proai command.';
@@ -307,13 +315,13 @@ client.connect(err => {
         const fullName = user.full_name;
 
         const userInfo = `
-User ID: ${userId}
-Username: @${username}
-Name: ${fullName}
-Permanent Link: tg://user?id=${userId}
+<b>User ID:</b> ${userId}
+<b>Username:</b> @${username}
+<b>Name:</b> ${fullName}
+<b>Permanent Link:</b> <a href="tg://user?id=${userId}">Open Chat</a>
         `;
 
-        await ctx.reply(userInfo);
+        await ctx.replyWithHTML(userInfo);
         logMessage(bot, user, userInput, userInfo);
       }
     } else {
@@ -329,12 +337,22 @@ Permanent Link: tg://user?id=${userId}
     if (isOwner(user.id)) {
       const message = ctx.message.text.split(' ').slice(1).join(' ');
       if (message) {
+        // Send to users
         const users = await usersCollection.find().toArray();
         for (const user of users) {
           try {
             await bot.telegram.sendMessage(user.user_id, message);
           } catch (error) {
             log(`Error sending message to ${user.user_id}: ${error}`);
+          }
+        }
+        // Send to groups
+        const groups = await groupsCollection.find().toArray();
+        for (const group of groups) {
+          try {
+            await bot.telegram.sendMessage(group.group_id, message);
+          } catch (error) {
+            log(`Error sending message to ${group.group_id}: ${error}`);
           }
         }
         const responseText = "Broadcast message sent.";
@@ -349,6 +367,15 @@ Permanent Link: tg://user?id=${userId}
       const responseText = "Ummmm, you are not capable of it.";
       await ctx.reply(responseText);
       logMessage(bot, user, userInput, responseText);
+    }
+  });
+
+  // Store group information when added to a group
+  bot.on('new_chat_members', async (ctx) => {
+    const chat = ctx.chat;
+    if (chat.type === 'group' || chat.type === 'supergroup') {
+      await groupsCollection.updateOne({ group_id: chat.id }, { $set: { title: chat.title } }, { upsert: true });
+      log(`Added to group: ${chat.title}`);
     }
   });
 
