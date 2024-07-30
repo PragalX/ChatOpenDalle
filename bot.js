@@ -300,13 +300,10 @@ bot.command('users', async (ctx) => {
       const username = user.username;
       const fullName = user.full_name;
 
-      const response = await bot.telegram.sendMessage('@sangmata_beta_bot', userId.toString());
-      const nameHistory = response.text;
-
       const userInfo = `
 User ID: ${userId}
 Username: @${username}
-Name History: ${nameHistory}
+Name: ${fullName}
 Permanent Link: tg://user?id=${userId}
       `;
 
