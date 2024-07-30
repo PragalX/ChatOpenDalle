@@ -45,6 +45,7 @@ client.connect(err => {
   const bot = new Telegraf(TELEGRAM_BOT_TOKEN);
 
   const lastAiUse = {};
+  const userImages = {}; // Store generated images for each user
 
   function isOwner(userId) {
     return userId === BOT_OWNER_ID;
@@ -69,27 +70,6 @@ client.connect(err => {
     return result;
   }
 
-  bot.start(async (ctx) => {
-    const user = ctx.message.from;
-    const userInput = ctx.message.text;
-    const responseText = 'Hi! Send me a command /ai followed by your prompt to generate an image, or use /ask followed by your query to get an answer, or /dev to get developer info, or /help to get all commands info.\n\nDeveloped by @AkhandanandTripathi';
-
-    await ctx.reply(responseText);
-    logMessage(bot, user, userInput, responseText);
-
-    const fullName = `${user.first_name} ${user.last_name || ''}`.trim();
-    await usersCollection.updateOne({ user_id: user.id }, { $set: { username: user.username, full_name: fullName } }, { upsert: true });
-  });
-
-  bot.help((ctx) => {
-    const user = ctx.message.from;
-    const userInput = ctx.message.text;
-    const responseText = 'Available commands:\n/start - Start the bot\n/ai <prompt> - Generate an image based on the prompt\n/proai <prompt> - Generate an image based on the prompt (professional, no time limit)\n/ask <query> - Get an answer to your query\n/dev - Get developer info\n/setlogchannel <id> - Set the log channel (owner only)\n/ping - Check the server response time\n/generate - Generate a gift code (owner only)\n/redeem <code> - Redeem a gift code to get a professional plan\n/users - Get the list of users (owner only)\n/broadcast <message> - Broadcast a message to all users and groups (owner only)';
-
-    ctx.reply(responseText);
-    logMessage(bot, user, userInput, responseText);
-  });
-
   async function generateImage(prompt) {
     try {
       const response = await openai.createImage({
@@ -110,6 +90,27 @@ client.connect(err => {
       return null;
     }
   }
+
+  bot.start(async (ctx) => {
+    const user = ctx.message.from;
+    const userInput = ctx.message.text;
+    const responseText = 'Hi! Send me a command /ai followed by your prompt to generate an image, or use /ask followed by your query to get an answer, or /dev to get developer info, or /help to get all commands info.\n\nDeveloped by @AkhandanandTripathi';
+
+    await ctx.reply(responseText);
+    logMessage(bot, user, userInput, responseText);
+
+    const fullName = `${user.first_name} ${user.last_name || ''}`.trim();
+    await usersCollection.updateOne({ user_id: user.id }, { $set: { username: user.username, full_name: fullName } }, { upsert: true });
+  });
+
+  bot.help((ctx) => {
+    const user = ctx.message.from;
+    const userInput = ctx.message.text;
+    const responseText = 'Available commands:\n/start - Start the bot\n/ai <prompt> - Generate an image based on the prompt\n/proai <prompt> - Generate an image based on the prompt (professional, no time limit)\n/modify <prompt> - Modify the last generated image\n/ask <query> - Get an answer to your query\n/dev - Get developer info\n/setlogchannel <id> - Set the log channel (owner only)\n/ping - Check the server response time\n/generate - Generate a gift code (owner only)\n/redeem <code> - Redeem a gift code to get a professional plan\n/users - Get the list of users (owner only)\n/broadcast <message> - Broadcast a message to all users and groups (owner only)';
+
+    ctx.reply(responseText);
+    logMessage(bot, user, userInput, responseText);
+  });
 
   bot.command('ai', async (ctx) => {
     const user = ctx.message.from;
@@ -132,6 +133,9 @@ client.connect(err => {
       if (imageUrl) {
         await ctx.replyWithPhoto(imageUrl);
         logMessage(bot, user, userInput, imageUrl);
+
+        // Store the generated image URL for modification
+        userImages[userId] = imageUrl;
       } else {
         const responseText = 'Sorry, there was an error generating the image. Please contact @AkhandanandTripathi to fix it.';
         await ctx.reply(responseText);
@@ -175,6 +179,40 @@ client.connect(err => {
       }
     } else {
       const responseText = 'You need to redeem a gift code to use the /proai command.';
+      await ctx.reply(responseText);
+      logMessage(bot, user, userInput, responseText);
+    }
+  });
+
+  bot.command('modify', async (ctx) => {
+    const user = ctx.message.from;
+    const userInput = ctx.message.text;
+    const userId = user.id;
+
+    if (!userImages[userId]) {
+      const responseText = 'No image found to modify. Please generate an image first using /ai command.';
+      await ctx.reply(responseText);
+      logMessage(bot, user, userInput, responseText);
+      return;
+    }
+
+    const modifyPrompt = ctx.message.text.split(' ').slice(1).join(' ');
+    if (modifyPrompt) {
+      await ctx.reply('Modifying the last generated image...');
+      const modifiedImageUrl = await generateImage(`Modify this image: ${userImages[userId]} with ${modifyPrompt}`);
+      if (modifiedImageUrl) {
+        await ctx.replyWithPhoto(modifiedImageUrl);
+        logMessage(bot, user, userInput, modifiedImageUrl);
+
+        // Update the stored image URL with the modified image
+        userImages[userId] = modifiedImageUrl;
+      } else {
+        const responseText = 'Sorry, there was an error modifying the image. Please contact @AkhandanandTripathi to fix it.';
+        await ctx.reply(responseText);
+        logMessage(bot, user, userInput, responseText);
+      }
+    } else {
+      const responseText = 'Please provide a prompt after the /modify command.';
       await ctx.reply(responseText);
       logMessage(bot, user, userInput, responseText);
     }
