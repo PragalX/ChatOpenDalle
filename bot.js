@@ -24,7 +24,7 @@ const openai = new OpenAIApi(configuration);
 // MongoDB client
 const client = new MongoClient(MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true });
 let usersCollection;
-let groupsCollection; // Collection to store group info
+let groupsCollection;
 let subscriptionsCollection;
 let giftCodesCollection;
 
@@ -36,28 +36,29 @@ client.connect(err => {
 
   const db = client.db('telegram_bot');
   usersCollection = db.collection('users');
-  groupsCollection = db.collection('groups'); // Initialize groups collection
+  groupsCollection = db.collection('groups');
   subscriptionsCollection = db.collection('subscriptions');
   giftCodesCollection = db.collection('gift_codes');
   log('Connected to MongoDB');
 
-  // Initialize the bot after connecting to MongoDB
   const bot = new Telegraf(TELEGRAM_BOT_TOKEN);
 
-  const lastAiUse = {};
-  const userImages = {}; // Store generated images for each user
+  const lastAiUse = new Map();
+  const userImages = new Map();
 
   function isOwner(userId) {
     return userId === BOT_OWNER_ID;
   }
 
-  function logMessage(bot, user, userInput, botResponse) {
+  async function logMessage(bot, user, userInput, botResponse) {
     if (LOG_CHANNEL_ID) {
       const userInfo = `User ID: ${user.id}\nUsername: @${user.username}\nName: ${user.first_name} ${user.last_name || ''}`;
       const message = `${userInfo}\nUser input: ${userInput}\nBot response: ${botResponse}`;
-      bot.telegram.sendMessage(LOG_CHANNEL_ID, message).catch(err => {
+      try {
+        await bot.telegram.sendMessage(LOG_CHANNEL_ID, message);
+      } catch (err) {
         log(`Error sending log message: ${err}`);
-      });
+      }
     }
   }
 
@@ -97,7 +98,7 @@ client.connect(err => {
     const responseText = 'Hi! Send me a command /ai followed by your prompt to generate an image, or use /ask followed by your query to get an answer, or /dev to get developer info, or /help to get all commands info.\n\nDeveloped by @AkhandanandTripathi';
 
     await ctx.reply(responseText);
-    logMessage(bot, user, userInput, responseText);
+    await logMessage(bot, user, userInput, responseText);
 
     const fullName = `${user.first_name} ${user.last_name || ''}`.trim();
     await usersCollection.updateOne({ user_id: user.id }, { $set: { username: user.username, full_name: fullName } }, { upsert: true });
@@ -109,7 +110,7 @@ client.connect(err => {
     const responseText = 'Available commands:\n/start - Start the bot\n/ai <prompt> - Generate an image based on the prompt\n/proai <prompt> - Generate an image based on the prompt (professional, no time limit)\n/modify <prompt> - Modify the last generated image\n/ask <query> - Get an answer to your query\n/dev - Get developer info\n/setlogchannel <id> - Set the log channel (owner only)\n/ping - Check the server response time\n/generate - Generate a gift code (owner only)\n/redeem <code> - Redeem a gift code to get a professional plan\n/users - Get the list of users (owner only)\n/broadcast <message> - Broadcast a message to all users and groups (owner only)';
 
     await ctx.reply(responseText);
-    logMessage(bot, user, userInput, responseText);
+    await logMessage(bot, user, userInput, responseText);
   });
 
   bot.command('ai', async (ctx) => {
@@ -118,33 +119,32 @@ client.connect(err => {
     const userId = user.id;
     const currentTime = new Date();
 
-    if (lastAiUse[userId] && (currentTime - lastAiUse[userId]) < 5000) {
+    if (lastAiUse.has(userId) && (currentTime - lastAiUse.get(userId)) < 5000) {
       const responseText = 'Please wait for 5 seconds before using the /ai command again.';
       await ctx.reply(responseText);
-      logMessage(bot, user, userInput, responseText);
+      await logMessage(bot, user, userInput, responseText);
       return;
     }
 
-    lastAiUse[userId] = currentTime;
+    lastAiUse.set(userId, currentTime);
     const userPrompt = ctx.message.text.split(' ').slice(1).join(' ');
     if (userPrompt) {
       await ctx.reply('Generating image...');
       const imageUrl = await generateImage(userPrompt);
       if (imageUrl) {
         await ctx.replyWithPhoto(imageUrl);
-        logMessage(bot, user, userInput, imageUrl);
+        await logMessage(bot, user, userInput, imageUrl);
 
-        // Store the generated image URL for modification
-        userImages[userId] = imageUrl;
+        userImages.set(userId, imageUrl);
       } else {
         const responseText = 'Sorry, there was an error generating the image. Please contact @AkhandanandTripathi to fix it.';
         await ctx.reply(responseText);
-        logMessage(bot, user, userInput, responseText);
+        await logMessage(bot, user, userInput, responseText);
       }
     } else {
       const responseText = 'Please provide a prompt after the /ai command.';
       await ctx.reply(responseText);
-      logMessage(bot, user, userInput, responseText);
+      await logMessage(bot, user, userInput, responseText);
     }
   });
 
@@ -163,24 +163,24 @@ client.connect(err => {
           const imageUrl = await generateImage(`${userPrompt} (image ${i + 1} improving each time)`);
           if (imageUrl) {
             await ctx.replyWithPhoto(imageUrl);
-            logMessage(bot, user, userInput, imageUrl);
+            await logMessage(bot, user, userInput, imageUrl);
           } else {
             const responseText = 'Sorry, there was an error generating one of the images. Please contact @AkhandanandTripathi to fix it.';
             await ctx.reply(responseText);
-            logMessage(bot, user, userInput, responseText);
+            await logMessage(bot, user, userInput, responseText);
             break;
           }
-          await new Promise(resolve => setTimeout(resolve, 5000)); // wait for 5 seconds
+          await new Promise(resolve => setTimeout(resolve, 5000)); 
         }
       } else {
         const responseText = 'Please provide a prompt after the /proai command.';
         await ctx.reply(responseText);
-        logMessage(bot, user, userInput, responseText);
+        await logMessage(bot, user, userInput, responseText);
       }
     } else {
       const responseText = 'You need to redeem a gift code to use the /proai command.';
       await ctx.reply(responseText);
-      logMessage(bot, user, userInput, responseText);
+      await logMessage(bot, user, userInput, responseText);
     }
   });
 
@@ -189,32 +189,49 @@ client.connect(err => {
     const userInput = ctx.message.text;
     const userId = user.id;
 
-    if (!userImages[userId]) {
-      const responseText = 'No image found to modify. Please generate an image first using /ai command.';
-      await ctx.reply(responseText);
-      logMessage(bot, user, userInput, responseText);
-      return;
-    }
-
     const modifyPrompt = ctx.message.text.split(' ').slice(1).join(' ');
-    if (modifyPrompt) {
-      await ctx.reply('Modifying the last generated image...');
-      const modifiedImageUrl = await generateImage(`Modify this image: ${userImages[userId]} with ${modifyPrompt}`);
-      if (modifiedImageUrl) {
-        await ctx.replyWithPhoto(modifiedImageUrl);
-        logMessage(bot, user, userInput, modifiedImageUrl);
-
-        // Update the stored image URL with the modified image
-        userImages[userId] = modifiedImageUrl;
+    if (ctx.message.reply_to_message && ctx.message.reply_to_message.photo) {
+      const photo = ctx.message.reply_to_message.photo.pop();
+      const fileUrl = await bot.telegram.getFileLink(photo.file_id);
+      if (modifyPrompt) {
+        await ctx.reply('Modifying the image...');
+        const modifiedImageUrl = await generateImage(`Modify this image: ${fileUrl} with ${modifyPrompt}`);
+        if (modifiedImageUrl) {
+          await ctx.replyWithPhoto(modifiedImageUrl);
+          await logMessage(bot, user, userInput, modifiedImageUrl);
+        } else {
+          const responseText = 'Sorry, there was an error modifying the image. Please contact @AkhandanandTripathi to fix it.';
+          await ctx.reply(responseText);
+          await logMessage(bot, user, userInput, responseText);
+        }
       } else {
-        const responseText = 'Sorry, there was an error modifying the image. Please contact @AkhandanandTripathi to fix it.';
+        const responseText = 'Please provide a prompt after the /modify command.';
         await ctx.reply(responseText);
-        logMessage(bot, user, userInput, responseText);
+        await logMessage(bot, user, userInput, responseText);
+      }
+    } else if (userImages.has(userId)) {
+      if (modifyPrompt) {
+        await ctx.reply('Modifying the last generated image...');
+        const modifiedImageUrl = await generateImage(`Modify this image: ${userImages.get(userId)} with ${modifyPrompt}`);
+        if (modifiedImageUrl) {
+          await ctx.replyWithPhoto(modifiedImageUrl);
+          await logMessage(bot, user, userInput, modifiedImageUrl);
+
+          userImages.set(userId, modifiedImageUrl);
+        } else {
+          const responseText = 'Sorry, there was an error modifying the image. Please contact @AkhandanandTripathi to fix it.';
+          await ctx.reply(responseText);
+          await logMessage(bot, user, userInput, responseText);
+        }
+      } else {
+        const responseText = 'Please provide a prompt after the /modify command.';
+        await ctx.reply(responseText);
+        await logMessage(bot, user, userInput, responseText);
       }
     } else {
-      const responseText = 'Please provide a prompt after the /modify command.';
+      const responseText = 'No image found to modify. Please generate an image first using /ai command or reply to an image with /modify command.';
       await ctx.reply(responseText);
-      logMessage(bot, user, userInput, responseText);
+      await logMessage(bot, user, userInput, responseText);
     }
   });
 
@@ -247,16 +264,16 @@ client.connect(err => {
       const answer = await askQuestion(userQuestion);
       if (answer) {
         await ctx.reply(answer);
-        logMessage(bot, user, userInput, answer);
+        await logMessage(bot, user, userInput, answer);
       } else {
         const responseText = 'Sorry, there was an error generating the answer. Please contact @AkhandanandTripathi to fix it.';
         await ctx.reply(responseText);
-        logMessage(bot, user, userInput, responseText);
+        await logMessage(bot, user, userInput, responseText);
       }
     } else {
       const responseText = 'Please provide a query after the /ask command.';
       await ctx.reply(responseText);
-      logMessage(bot, user, userInput, responseText);
+      await logMessage(bot, user, userInput, responseText);
     }
   });
 
@@ -265,7 +282,7 @@ client.connect(err => {
     const userInput = ctx.message.text;
     const responseText = 'Developer @AkhandanandTripathi';
     await ctx.reply(responseText);
-    logMessage(bot, user, userInput, responseText);
+    await logMessage(bot, user, userInput, responseText);
   });
 
   bot.command('setlogchannel', async (ctx) => {
@@ -277,16 +294,16 @@ client.connect(err => {
         log_channel_id = args[0];
         const responseText = `Log channel set to ${log_channel_id}`;
         await ctx.reply(responseText);
-        logMessage(bot, user, userInput, responseText);
+        await logMessage(bot, user, userInput, responseText);
       } else {
         const responseText = 'Usage: /setlogchannel <log_channel_id>';
         await ctx.reply(responseText);
-        logMessage(bot, user, userInput, responseText);
+        await logMessage(bot, user, userInput, responseText);
       }
     } else {
       const responseText = "You don't have permission to use this command. Please ask @AkhandanandTripathi to do it.";
       await ctx.reply(responseText);
-      logMessage(bot, user, userInput, responseText);
+      await logMessage(bot, user, userInput, responseText);
     }
   });
 
@@ -299,7 +316,7 @@ client.connect(err => {
     const ping_time = end_time - start_time;
     const responseText = `Pong! ${ping_time} ms`;
     await ctx.reply(responseText);
-    logMessage(bot, user, userInput, responseText);
+    await logMessage(bot, user, userInput, responseText);
   });
 
   bot.command('generate', async (ctx) => {
@@ -310,11 +327,11 @@ client.connect(err => {
       await giftCodesCollection.insertOne({ code: code, plan: 'professional' });
       const responseText = `Generated gift code: ${code}`;
       await ctx.reply(responseText);
-      logMessage(bot, user, userInput, responseText);
+      await logMessage(bot, user, userInput, responseText);
     } else {
       const responseText = "You don't have permission to use this command. Please ask @AkhandanandTripathi to do it.";
       await ctx.reply(responseText);
-      logMessage(bot, user, userInput, responseText);
+      await logMessage(bot, user, userInput, responseText);
     }
   });
 
@@ -329,16 +346,16 @@ client.connect(err => {
         await subscriptionsCollection.updateOne({ user_id: user.id }, { $set: { plan: 'professional' } }, { upsert: true });
         const responseText = "You have successfully redeemed the code and upgraded to the professional plan.";
         await ctx.reply(responseText);
-        logMessage(bot, user, userInput, responseText);
+        await logMessage(bot, user, userInput, responseText);
       } else {
         const responseText = "Invalid or already redeemed gift code.";
         await ctx.reply(responseText);
-        logMessage(bot, user, userInput, responseText);
+        await logMessage(bot, user, userInput, responseText);
       }
     } else {
       const responseText = "Usage: /redeem <gift_code>";
       await ctx.reply(responseText);
-      logMessage(bot, user, userInput, responseText);
+      await logMessage(bot, user, userInput, responseText);
     }
   });
 
@@ -360,12 +377,12 @@ client.connect(err => {
         `;
 
         await ctx.replyWithHTML(userInfo);
-        logMessage(bot, user, userInput, userInfo);
+        await logMessage(bot, user, userInput, userInfo);
       }
     } else {
       const responseText = "Ummmm, you are not capable of it.";
       await ctx.reply(responseText);
-      logMessage(bot, user, userInput, responseText);
+      await logMessage(bot, user, userInput, responseText);
     }
   });
 
@@ -375,7 +392,6 @@ client.connect(err => {
     if (isOwner(user.id)) {
       const message = ctx.message.text.split(' ').slice(1).join(' ');
       if (message) {
-        // Send to users
         const users = await usersCollection.find().toArray();
         for (const user of users) {
           try {
@@ -384,7 +400,6 @@ client.connect(err => {
             log(`Error sending message to ${user.user_id}: ${error}`);
           }
         }
-        // Send to groups
         const groups = await groupsCollection.find().toArray();
         for (const group of groups) {
           try {
@@ -395,20 +410,19 @@ client.connect(err => {
         }
         const responseText = "Broadcast message sent.";
         await ctx.reply(responseText);
-        logMessage(bot, user, userInput, responseText);
+        await logMessage(bot, user, userInput, responseText);
       } else {
         const responseText = "Usage: /broadcast <message>";
         await ctx.reply(responseText);
-        logMessage(bot, user, userInput, responseText);
+        await logMessage(bot, user, userInput, responseText);
       }
     } else {
       const responseText = "Ummmm, you are not capable of it.";
       await ctx.reply(responseText);
-      logMessage(bot, user, userInput, responseText);
+      await logMessage(bot, user, userInput, responseText);
     }
   });
 
-  // Store group information when added to a group
   bot.on('new_chat_members', async (ctx) => {
     const chat = ctx.chat;
     if (chat.type === 'group' || chat.type === 'supergroup') {
@@ -423,7 +437,6 @@ client.connect(err => {
     log(`Error starting bot: ${err}`);
   });
 
-  // Set up the Express app to serve the index.html page
   const app = express();
   const PORT = 3000;
 
