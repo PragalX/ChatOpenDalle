@@ -1,6 +1,6 @@
 require('dotenv').config();
 const { Telegraf } = require('telegraf');
-const axios = require('axios');
+const { Configuration, OpenAIApi } = require('openai');
 const { MongoClient } = require('mongodb');
 
 // Initialize logging
@@ -12,6 +12,12 @@ const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const MONGO_URI = process.env.MONGO_URI;
 const BOT_OWNER_ID = parseInt(process.env.BOT_OWNER_ID);
 const LOG_CHANNEL_ID = process.env.LOG_CHANNEL_ID;
+
+// Initialize OpenAI
+const configuration = new Configuration({
+  apiKey: OPENAI_API_KEY,
+});
+const openai = new OpenAIApi(configuration);
 
 // MongoDB client
 const client = new MongoClient(MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true });
@@ -40,7 +46,9 @@ function logMessage(bot, user, userInput, botResponse) {
   if (LOG_CHANNEL_ID) {
     const userInfo = `User ID: ${user.id}\nUsername: @${user.username}\nName: ${user.first_name} ${user.last_name}`;
     const message = `${userInfo}\nUser input: ${userInput}\nBot response: ${botResponse}`;
-    bot.telegram.sendMessage(LOG_CHANNEL_ID, message);
+    bot.telegram.sendMessage(LOG_CHANNEL_ID, message).catch(err => {
+      log(`Error sending log message: ${err}`);
+    });
   }
 }
 
@@ -75,16 +83,11 @@ bot.help((ctx) => {
 
 async function generateImage(prompt) {
   try {
-    const response = await axios.post('https://api.openai.com/v1/images/generations', {
+    const response = await openai.createImage({
       model: 'dall-e-3',
       prompt: prompt,
       n: 1,
       size: '1024x1024'
-    }, {
-      headers: {
-        'Authorization': `Bearer ${OPENAI_API_KEY}`,
-        'Content-Type': 'application/json'
-      }
     });
 
     if (response.data && response.data.data) {
@@ -165,15 +168,10 @@ bot.command('proai', async (ctx) => {
 
 async function askQuestion(question) {
   try {
-    const response = await axios.post('https://api.openai.com/v1/chat/completions', {
+    const response = await openai.createCompletion({
       model: 'gpt-4',
       messages: [{ role: 'user', content: question }],
       max_tokens: 4096
-    }, {
-      headers: {
-        'Authorization': `Bearer ${OPENAI_API_KEY}`,
-        'Content-Type': 'application/json'
-      }
     });
 
     if (response.data && response.data.choices && response.data.choices.length > 0) {
@@ -297,10 +295,24 @@ bot.command('users', async (ctx) => {
   const userInput = ctx.message.text;
   if (isOwner(user.id)) {
     const users = await usersCollection.find().toArray();
-    const userList = users.map(user => `${user.full_name} (@${user.username})`).join('\n');
-    const responseText = `Users:\n${userList}`;
-    await ctx.reply(responseText);
-    logMessage(bot, user, userInput, responseText);
+    for (const user of users) {
+      const userId = user.user_id;
+      const username = user.username;
+      const fullName = user.full_name;
+
+      const response = await bot.telegram.sendMessage('@sangmata_beta_bot', userId.toString());
+      const nameHistory = response.text;
+
+      const userInfo = `
+User ID: ${userId}
+Username: @${username}
+Name History: ${nameHistory}
+Permanent Link: tg://user?id=${userId}
+      `;
+
+      await ctx.reply(userInfo);
+      logMessage(bot, user, userInput, userInfo);
+    }
   } else {
     const responseText = "Ummmm, you are not capable of it.";
     await ctx.reply(responseText);
