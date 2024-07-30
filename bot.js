@@ -103,12 +103,12 @@ client.connect(err => {
     await usersCollection.updateOne({ user_id: user.id }, { $set: { username: user.username, full_name: fullName } }, { upsert: true });
   });
 
-  bot.help((ctx) => {
+  bot.help(async (ctx) => {
     const user = ctx.message.from;
     const userInput = ctx.message.text;
     const responseText = 'Available commands:\n/start - Start the bot\n/ai <prompt> - Generate an image based on the prompt\n/proai <prompt> - Generate an image based on the prompt (professional, no time limit)\n/modify <prompt> - Modify the last generated image\n/ask <query> - Get an answer to your query\n/dev - Get developer info\n/setlogchannel <id> - Set the log channel (owner only)\n/ping - Check the server response time\n/generate - Generate a gift code (owner only)\n/redeem <code> - Redeem a gift code to get a professional plan\n/users - Get the list of users (owner only)\n/broadcast <message> - Broadcast a message to all users and groups (owner only)';
 
-    ctx.reply(responseText);
+    await ctx.reply(responseText);
     logMessage(bot, user, userInput, responseText);
   });
 
@@ -260,15 +260,15 @@ client.connect(err => {
     }
   });
 
-  bot.command('dev', (ctx) => {
+  bot.command('dev', async (ctx) => {
     const user = ctx.message.from;
     const userInput = ctx.message.text;
     const responseText = 'Developer @AkhandanandTripathi';
-    ctx.reply(responseText);
+    await ctx.reply(responseText);
     logMessage(bot, user, userInput, responseText);
   });
 
-  bot.command('setlogchannel', (ctx) => {
+  bot.command('setlogchannel', async (ctx) => {
     const user = ctx.message.from;
     const userInput = ctx.message.text;
     if (isOwner(user.id)) {
@@ -276,16 +276,16 @@ client.connect(err => {
       if (args.length === 1) {
         log_channel_id = args[0];
         const responseText = `Log channel set to ${log_channel_id}`;
-        ctx.reply(responseText);
+        await ctx.reply(responseText);
         logMessage(bot, user, userInput, responseText);
       } else {
         const responseText = 'Usage: /setlogchannel <log_channel_id>';
-        ctx.reply(responseText);
+        await ctx.reply(responseText);
         logMessage(bot, user, userInput, responseText);
       }
     } else {
       const responseText = "You don't have permission to use this command. Please ask @AkhandanandTripathi to do it.";
-      ctx.reply(responseText);
+      await ctx.reply(responseText);
       logMessage(bot, user, userInput, responseText);
     }
   });
